@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>iTunes Library Playlists</title>
+<style>
+
+body {
+    margin: 0;
+    font-family: helvetica,arial,sans-serif;
+    font-size: small;
+    line-height: 125%;
+}
+
+#welcome {
+    text-align: center;
+}
+
+input[type="file"] {
+    padding: 1ex;
+    background: #eee;
+}
+
+table {
+    text-align: left;
+    width: 100%;
+    border-collapse: collapse;
+}
+caption {
+    text-align: left;
+    padding: 1ex;
+}
+tbody tr:nth-child(odd) {
+    background-color: #f4f4f4;
+}
+th, td {
+    padding-left: 1ex;
+}
+.num {
+    text-align: right;
+    padding-right: 1ex;
+}
+
+@media print {
+    select, button {
+        display: none;
+    }
+    #playlistTracks caption::before {
+        content: attr(title);
+        font-weight: bold;
+        display: block;
+        font-size: 125%;
+    }
+}
+
+</style>
+<script>
+
+function parsePropertyList(plist) {
+    
+    function parseArray(array) {
+        var parsed = [];
+        var node = array.firstChild;
+        while (node !== null) {
+            if (node.nodeType === Node.ELEMENT_NODE) {
+                parsed.push(parseNode(node));
+            }
+            node = node.nextSibling
+        }
+        return parsed;
+    }
+    
+    function parseDict(dict) {
+        var parsed = {};
+        var key = "";
+        var node = dict.firstChild;
+        while (node !== null) {
+            if (node.nodeName === "key") {
+                key = node.textContent;
+                node = node.nextSibling;
+                while (node.nodeType !== Node.ELEMENT_NODE) {
+                    node = node.nextSibling
+                }
+                parsed[key] = parseNode(node);
+            }
+            node = node.nextSibling;
+        }
+        return parsed;
+    }
+    
+    function parseNode(node) {
+        switch(node && node.nodeName) {
+            case "string":
+                return node.textContent;
+            case "real":
+                return parseFloat(node.textContent);
+            case "integer":
+                return parseInt(node.textContent, 10);
+            case "true":
+                return true;
+            case "false":
+                return false;
+            case "date":
+                return new Date(node.textContent);
+            case "data":
+                return node.textContent.replace(/\s/g,'');
+            case "array":
+                return parseArray(node);
+            case "dict":
+                return parseDict(node);
+            default:
+                return null;
+        }
+    }
+    
+    if (typeof plist === "string") {
+        plist = new DOMParser().parseFromString(plist, "text/xml");
+    }
+    
+    var topDict = plist.querySelector("dict");
+    return parseNode(topDict);
+    
+}
+
+
+var library = {};
+
+function humanReadableTrackTime(time) {
+    var humanReadable = "";
+    
+    var hours = Math.floor(time/3600000);
+    if (hours > 0) {
+        humanReadable += hours + ":";
+    }
+    
+    var minutes = Math.floor(time/60000%60);
+    if (hours > 0 && minutes < 10) {
+        humanReadable += "0" + minutes + ":";
+    } else {
+        humanReadable += minutes + ":";
+    }
+    
+    var seconds = Math.round(time/1000%60);
+    if (seconds < 10) {
+        humanReadable += "0" + seconds;
+    } else {
+        humanReadable += seconds;
+    }
+    
+    return humanReadable;
+}
+
+function humanReadablePlaylistTime(time) {
+    var humanReadable = "";
+    
+    var hours = Math.floor(time/3600000);
+    if (hours === 1) {
+        humanReadable += "1 hour ";
+    } else if (hours > 1) {
+        humanReadable += hours + " hours ";
+    }
+    
+    var minutes = Math.round(time/60000%60);
+    if (minutes === 1) {
+        humanReadable += "1 minute";
+    } else if (minutes > 1) {
+        humanReadable += minutes + " minutes";
+    }
+    
+    return humanReadable;
+}
+
+function playlistHTML(playlistIndex) {
+    var playlist = library.Playlists[playlistIndex];
+    var playlistItems = playlist["Playlist Items"] || [];
+    var playlistTotalTime = 0;
+    
+    var tbody = '<tbody>';
+    playlistItems.forEach(function(item, index) {
+        var track = library.Tracks[item["Track ID"]];
+        playlistTotalTime += track["Total Time"];
+        tbody += '<tr><td class="num">' + (index+1) + '</td><td>' + (track["Name"]||"") + '</td><td class="num">' +
+            humanReadableTrackTime(track["Total Time"]) + '</td><td>' + (track["Artist"]||"") + '</td><td>' +
+            (track["Album"]||"") + '</td></tr>';
+    });
+    
+    return '<table>' + 
+        '<caption title="' + playlist.Name + '">' + playlistItems.length + " songs, " + humanReadablePlaylistTime(playlistTotalTime) + '</caption>' +
+        '<thead><tr><th class="num"></th><th>Name</th><th class="num">Time</th><th>Artist</th><th>Album</th></tr></thead>' +
+        tbody + '</table>';
+}
+
+function showPlaylist(playlistIndex) {
+    var playlistContainer = document.getElementById("playlistTracks");
+    if (playlistContainer == null) {
+        playlistContainer = document.createElement("div");
+        playlistContainer.id = "playlistTracks";
+        document.body.appendChild(playlistContainer);
+    }
+    playlistContainer.innerHTML = playlistHTML(playlistIndex);
+    document.title = document.querySelector("caption").title;
+}
+
+function buildPlaylistSelector() {
+    select = document.createElement("select");
+    select.id = "playlist-selector";
+    library.Playlists.forEach(function(playlist, index) {
+        var option = document.createElement("option");
+        option.value = index;
+        var numItems = playlist["Playlist Items"] ? playlist["Playlist Items"].length : 0;
+        option.textContent = playlist["Name"] + " (" + numItems + ")";
+        select.appendChild(option);
+    });
+    select.onchange = function playlistSelectChange(event) {
+        showPlaylist(this.value);
+    };
+    document.body.appendChild(select);
+    
+    var exportButton = document.createElement("button");
+    exportButton.textContent = "Export Playlist";
+    exportButton.onclick = function() {
+        var playlistIndex = document.getElementById("playlist-selector").value;
+        exportPlaylist(playlistIndex);
+    }
+    document.body.appendChild(exportButton);
+}
+
+function exportPlaylist(playlistIndex) {
+    var newLine = "\n";
+    var playlist = library.Playlists[playlistIndex];
+    var exportString = "#EXTM3U" + newLine;
+    playlist["Playlist Items"].forEach(function(item) {
+        var track = library.Tracks[item["Track ID"]];
+        var trackTitle = track.Name;
+        if (track.Artist) {
+            trackTitle += " - " + track.Artist;
+        } else if (track["Album Artist"]) {
+            trackTitle += " - " + track["Album Artist"];
+        }
+        exportString += "#EXTINF:" + Math.round(track["Total Time"]/1000) + "," + trackTitle + newLine;
+        exportString += track.Location + newLine;
+    });
+    downloadFile("application/x-mpegurl", exportString, playlist.Name+".m3u");
+}
+
+function readFile(file) {
+    var reader = new FileReader();
+    reader.onload = function(e) {
+        library = parsePropertyList(e.target.result);
+        if (library === null) {
+            alert("Unable to find an iTunes Music Library in " + file.name);
+        } else {
+            document.getElementById("welcome").remove();
+            buildPlaylistSelector();
+            showPlaylist(0);
+        }
+    };
+    reader.readAsText(file);
+}
+
+function downloadFile(type, data, filename) {
+    var downloadLink = document.createElement('a');
+    var downloadAttributeSupported = 'download' in downloadLink;
+    downloadLink.href = 'data:' + type + ',' + encodeURIComponent( data );
+    downloadLink.download = filename;
+    downloadLink.textContent = filename;
+    document.body.insertBefore(downloadLink, document.getElementById('playlistTracks'));
+    if (downloadAttributeSupported) {
+        downloadLink.click();
+        downloadLink.parentNode.removeChild(downloadLink);
+    } else {
+       downloadLink.textContent += ' (right click and save as)';
+    }
+}
+
+</script>
+</head>
+<body>
+<section id="welcome">
+    <h1>iTunes Library Playlists</h1>
+    <p>View and export the playlists contained in an <a href="http://support.apple.com/kb/HT1660">iTunes library XML file</a>.</p>
+    <p>Source code available on <a href="https://github.com/bhoule/itunes-library-playlists">GitHub</a></p>
+    <input type="file" accept="application/xml" onchange="readFile(this.files[0]);">
+</section>
+</body>
+</html>
